@@ -22,8 +22,6 @@
 - **数据库**: SQLite (本地存储) + GORM (ORM)
 - **配置管理**: Viper
 - **日志系统**: logrus 或 zap
-- **中间件**: CORS、Recovery、Logger、Rate Limiting
-- **API文档**: Swagger (gin-swagger)
 
 **架构设计：**
 - RESTful API设计规范
@@ -43,19 +41,7 @@
   - 连接测试功能，验证服务器可用性
   - 支持多种连接方式：HTTP/HTTPS、WebSocket、本地进程
   - 配置验证和错误提示
-- **数据模型**:
-  ```go
-  type MCPServer struct {
-      ID          uint      `json:"id" gorm:"primaryKey"`
-      Name        string    `json:"name" gorm:"not null"`
-      Description string    `json:"description"`
-      Type        string    `json:"type"` // http, websocket, process
-      Config      string    `json:"config" gorm:"type:text"` // JSON配置
-      Status      string    `json:"status"` // active, inactive, error
-      CreatedAt   time.Time `json:"created_at"`
-      UpdatedAt   time.Time `json:"updated_at"`
-  }
-  ```
+  - 添加后将tools 入库存储
 
 **2、增删改查 MCP Server**
 - **CRUD操作**:
@@ -82,19 +68,7 @@
   - 每个工具的开关控制（Switch组件）
   - 工具详情展示：名称、描述、参数说明、使用示例
   - 批量启用/禁用功能
-- **数据模型**:
-  ```go
-  type MCPTool struct {
-      ID          uint      `json:"id" gorm:"primaryKey"`
-      ServerID    uint      `json:"server_id"`
-      Name        string    `json:"name"`
-      Description string    `json:"description"`
-      Schema      string    `json:"schema" gorm:"type:text"` // JSON Schema
-      Enabled     bool      `json:"enabled" gorm:"default:true"`
-      Category    string    `json:"category"`
-      UpdatedAt   time.Time `json:"updated_at"`
-  }
-  ```
+
 
 **4、对话时，调用打开的MCP Server中的Tools**
 - **工具调用流程**:

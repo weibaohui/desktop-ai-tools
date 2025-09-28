@@ -138,15 +138,52 @@ export class MCPServerService {
    */
   static async testConnection(url: string, authConfig?: any): Promise<boolean> {
     try {
-      // 这里可以实现实际的连接测试逻辑
-      // 暂时返回模拟结果
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      return Math.random() > 0.3; // 70% 成功率
+      const response = await api.post<ApiResponse<{ connected: boolean }>>('/mcp-servers/test-connection', {
+        url,
+        auth_config: authConfig,
+      });
+      
+      return response.data.success && response.data.data?.connected === true;
     } catch (error) {
       console.error('连接测试失败:', error);
       return false;
     }
   }
+
+  /**
+   * 发现工具
+   */
+  static async discoverTools(id: number): Promise<{ success: boolean; message?: string; tools_count?: number }> {
+    try {
+      const response = await api.post<ApiResponse<{ tools_count: number }>>(`/mcp-servers/${id}/discover-tools`);
+      
+      return {
+        success: response.data.success,
+        message: response.data.message,
+        tools_count: response.data.data?.tools_count,
+      };
+    } catch (error) {
+      console.error('工具发现失败:', error);
+      return {
+        success: false,
+        message: '工具发现失败',
+      };
+    }
+  }
 }
+
+// 导出便捷的API对象
+export const mcpServerApi = {
+  getList: MCPServerService.getList,
+  getById: MCPServerService.getById,
+  create: MCPServerService.create,
+  update: MCPServerService.update,
+  delete: MCPServerService.delete,
+  updateStatus: MCPServerService.updateStatus,
+  toggle: MCPServerService.toggle,
+  getTags: MCPServerService.getTags,
+  testConnection: MCPServerService.testConnection,
+  discoverTools: MCPServerService.discoverTools,
+};
 
 export default MCPServerService;

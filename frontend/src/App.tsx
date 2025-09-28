@@ -13,10 +13,11 @@ import {
   Menu,
   Layout
 } from 'antd';
-import { SendOutlined, ApiOutlined, DatabaseOutlined, HomeOutlined } from '@ant-design/icons';
+import { SendOutlined, ApiOutlined, DatabaseOutlined, HomeOutlined, ToolOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import { Greet } from "../wailsjs/go/main/App";
 import MCPServerList from './components/MCPServerList';
+import MCPTools from './pages/MCPTools';
 import './App.css';
 
 const { Title, Text } = Typography;
@@ -103,7 +104,7 @@ function App() {
                 Gin 后端 API 演示
               </span>
             }
-            bordered={false}
+            variant="borderless"
           >
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
               <div>
@@ -145,7 +146,7 @@ function App() {
           {/* 原有Wails方法演示 */}
           <Card 
             title="原有 Wails 方法演示"
-            bordered={false}
+            variant="borderless"
           >
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
               <Alert
@@ -187,12 +188,23 @@ function App() {
   );
 
   /**
+   * 渲染MCP Tools管理页面
+   */
+  const renderMCPToolsPage = () => (
+    <div style={{ padding: '0 24px' }}>
+      <MCPTools />
+    </div>
+  );
+
+  /**
    * 渲染页面内容
    */
   const renderContent = () => {
     switch (currentPage) {
       case 'mcp-servers':
         return renderMCPServerPage();
+      case 'mcp-tools':
+        return renderMCPToolsPage();
       default:
         return renderHomePage();
     }
@@ -221,6 +233,11 @@ function App() {
                 key: 'mcp-servers',
                 icon: <DatabaseOutlined />,
                 label: 'MCP Server 管理',
+              },
+              {
+                key: 'mcp-tools',
+                icon: <ToolOutlined />,
+                label: 'MCP Tools 管理',
               },
             ]}
           />

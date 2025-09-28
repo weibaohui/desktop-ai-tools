@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 	"gorm.io/gorm"
 )
@@ -88,6 +89,66 @@ type MCPServerListRequest struct {
 	OrderDir string `form:"order_dir,default=desc" binding:"oneof=asc desc"`
 }
 
+// MCPToolDiscoveryRequest 工具发现请求
+type MCPToolDiscoveryRequest struct {
+	ServerID uint `json:"server_id" binding:"required"`
+}
+
+// MCPToolDiscoveryResponse 工具发现响应
+type MCPToolDiscoveryResponse struct {
+	Success bool      `json:"success"`
+	Message string    `json:"message"`
+	Tools   []MCPTool `json:"tools,omitempty"`
+}
+
+// MCPToolListRequest 工具列表查询请求
+type MCPToolListRequest struct {
+	ServerID uint   `form:"server_id"`
+	Category string `form:"category"`
+	Enabled  *bool  `form:"enabled"`
+	Search   string `form:"search"`
+	Page     int    `form:"page,default=1" binding:"min=1"`
+	Size     int    `form:"size,default=50" binding:"min=1,max=100"`
+}
+
+// MCPToolListResponse 工具列表响应
+type MCPToolListResponse struct {
+	Total int64     `json:"total"`
+	Page  int       `json:"page"`
+	Size  int       `json:"size"`
+	Tools []MCPTool `json:"tools"`
+}
+
+// MCPToolUpdateRequest 工具更新请求
+type MCPToolUpdateRequest struct {
+	IsEnabled *bool  `json:"is_enabled"`
+	Category  string `json:"category" binding:"max=50"`
+}
+
+// MCPToolBatchUpdateRequest 工具批量更新请求
+type MCPToolBatchUpdateRequest struct {
+	ToolIDs   []uint `json:"tool_ids" binding:"required"`
+	IsEnabled *bool  `json:"is_enabled"`
+	Category  string `json:"category" binding:"max=50"`
+}
+
+// MCPToolParameter 工具参数结构（用于解析Parameters字段）
+type MCPToolParameter struct {
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Description string      `json:"description"`
+	Required    bool        `json:"required"`
+	Default     interface{} `json:"default,omitempty"`
+	Enum        []string    `json:"enum,omitempty"`
+}
+
+// MCPToolSchema 工具完整模式（从MCP服务器获取的原始数据）
+type MCPToolSchema struct {
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	InputSchema map[string]interface{} `json:"inputSchema"`
+}
+
 // TableName 指定表名
 func (MCPServer) TableName() string {
 	return "mcp_servers"
@@ -96,6 +157,29 @@ func (MCPServer) TableName() string {
 // TableName 指定表名
 func (MCPTool) TableName() string {
 	return "mcp_tools"
+}
+
+// GetParameters 解析工具参数
+func (m *MCPTool) GetParameters() ([]MCPToolParameter, error) {
+	if m.Parameters == "" {
+		return []MCPToolParameter{}, nil
+	}
+	
+	var params []MCPToolParameter
+	if err := json.Unmarshal([]byte(m.Parameters), &params); err != nil {
+		return nil, err
+	}
+	return params, nil
+}
+
+// SetParameters 设置工具参数
+func (m *MCPTool) SetParameters(params []MCPToolParameter) error {
+	data, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
+	m.Parameters = string(data)
+	return nil
 }
 
 // BeforeCreate 创建前的钩子函数

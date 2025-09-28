@@ -19,6 +19,7 @@ type App struct {
 	ctx              context.Context
 	router           *gin.Engine
 	mcpServerService *services.MCPServerService
+	mcpToolService   *services.MCPToolService
 }
 
 // HelloRequest 请求结构体
@@ -49,6 +50,7 @@ func NewApp() *App {
 	
 	// 初始化服务
 	app.mcpServerService = services.NewMCPServerService()
+	app.mcpToolService = services.NewMCPToolService(database.GetDB())
 	
 	app.setupRouter()
 	return app
@@ -85,6 +87,18 @@ func (a *App) setupRouter() {
 			mcpServers.PUT("/:id/status", a.handleUpdateMCPServerStatus)
 			mcpServers.PUT("/:id/toggle", a.handleToggleMCPServer)
 			mcpServers.GET("/tags", a.handleGetMCPServerTags)
+			
+			// 工具发现路由
+			mcpServers.POST("/:id/discover-tools", a.handleDiscoverTools)
+		}
+		
+		// MCP Tools 相关路由
+		mcpTools := api.Group("/mcp-tools")
+		{
+			mcpTools.GET("", a.handleGetMCPTools)
+			mcpTools.PUT("/:id", a.handleUpdateMCPTool)
+			mcpTools.PUT("/batch", a.handleBatchUpdateMCPTools)
+			mcpTools.GET("/categories", a.handleGetMCPToolCategories)
 		}
 	}
 }
@@ -372,7 +386,159 @@ func (a *App) handleGetMCPServerTags(c *gin.Context) {
 	})
 }
 
-// Greet returns a greeting for the given name (保留原有的Wails方法)
+// Greet returns a greeting for the given name
 func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
+}
+
+// handleDiscoverTools 处理工具发现请求
+func (a *App) handleDiscoverTools(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "无效的服务器ID",
+		})
+		return
+	}
+
+	response, err := a.mcpToolService.DiscoverTools(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("工具发现失败: %v", err),
+		})
+		return
+	}
+
+	if response.Success {
+		c.JSON(http.StatusOK, response)
+	} else {
+		c.JSON(http.StatusBadRequest, response)
+	}
+}
+
+// handleGetMCPTools 处理获取工具列表请求
+func (a *App) handleGetMCPTools(c *gin.Context) {
+	var req models.MCPToolListRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "请求参数错误",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	response, err := a.mcpToolService.GetToolsByServer(&req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "获取工具列表失败",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    response,
+	})
+}
+
+// handleUpdateMCPTool 处理更新工具请求
+func (a *App) handleUpdateMCPTool(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "无效的工具ID",
+		})
+		return
+	}
+
+	var req models.MCPToolUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "请求参数错误",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if err := a.mcpToolService.UpdateTool(uint(id), &req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "更新工具失败",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "工具更新成功",
+	})
+}
+
+// handleBatchUpdateMCPTools 处理批量更新工具请求
+func (a *App) handleBatchUpdateMCPTools(c *gin.Context) {
+	var req models.MCPToolBatchUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "请求参数错误",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if err := a.mcpToolService.BatchUpdateTools(&req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "批量更新工具失败",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("成功更新 %d 个工具", len(req.ToolIDs)),
+	})
+}
+
+// handleGetMCPToolCategories 处理获取工具分类请求
+func (a *App) handleGetMCPToolCategories(c *gin.Context) {
+	serverIDStr := c.Query("server_id")
+	var serverID uint
+	if serverIDStr != "" {
+		id, err := strconv.ParseUint(serverIDStr, 10, 32)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "无效的服务器ID",
+			})
+			return
+		}
+		serverID = uint(id)
+	}
+
+	categories, err := a.mcpToolService.GetToolCategories(serverID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "获取工具分类失败",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    categories,
+	})
 }

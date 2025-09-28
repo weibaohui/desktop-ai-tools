@@ -26,6 +26,7 @@ import {
   SettingOutlined,
   LinkOutlined,
   TagsOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType, TableProps } from 'antd/es/table';
 import type {
@@ -208,6 +209,22 @@ const MCPServerList: React.FC = () => {
   };
 
   /**
+   * 刷新工具列表
+   */
+  const handleRefreshTools = async (server: MCPServer) => {
+    try {
+      const response = await MCPServerService.refreshTools(server.id);
+      if (response.success) {
+        message.success(response.message || '工具刷新成功');
+      } else {
+        message.error(response.message || '工具刷新失败');
+      }
+    } catch (error) {
+      message.error('工具刷新失败: ' + (error as Error).message);
+    }
+  };
+
+  /**
    * 获取状态标签
    */
   const getStatusTag = (status: string) => {
@@ -326,6 +343,14 @@ const MCPServerList: React.FC = () => {
       key: 'action',
       render: (_, record) => (
         <Space size="small">
+          <Tooltip title="刷新工具">
+            <Button
+              type="text"
+              icon={<SyncOutlined />}
+              onClick={() => handleRefreshTools(record)}
+              disabled={record.status !== 'active' || !record.is_enabled}
+            />
+          </Tooltip>
           <Tooltip title="编辑">
             <Button
               type="text"

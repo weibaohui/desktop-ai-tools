@@ -99,6 +99,7 @@ func (a *App) setupRouter() {
 			mcpTools.PUT("/:id", a.handleUpdateMCPTool)
 			mcpTools.PUT("/batch", a.handleBatchUpdateMCPTools)
 			mcpTools.GET("/categories", a.handleGetMCPToolCategories)
+			mcpTools.POST("/refresh/:serverID", a.handleRefreshTools)
 		}
 	}
 }
@@ -541,4 +542,27 @@ func (a *App) handleGetMCPToolCategories(c *gin.Context) {
 		"success": true,
 		"data":    categories,
 	})
+}
+
+// handleRefreshTools 处理刷新指定服务器的工具列表
+func (a *App) handleRefreshTools(c *gin.Context) {
+	serverIDStr := c.Param("serverID")
+	serverID, err := strconv.ParseUint(serverIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "无效的服务器ID",
+		})
+		return
+	}
+
+	response, err := a.mcpToolService.RefreshAllTools(uint(serverID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "刷新工具失败",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
 }

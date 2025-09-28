@@ -170,6 +170,27 @@ export class MCPServerService {
       };
     }
   }
+
+  /**
+   * 刷新工具列表
+   */
+  static async refreshTools(id: number): Promise<{ success: boolean; message?: string; tools?: any[] }> {
+    try {
+      const response = await api.post<ApiResponse<{ tools: any[] }>>(`/mcp-tools/refresh/${id}`);
+      
+      return {
+        success: response.data.success,
+        message: response.data.message,
+        tools: response.data.data?.tools,
+      };
+    } catch (error) {
+      console.error('刷新工具失败:', error);
+      return {
+        success: false,
+        message: '刷新工具失败',
+      };
+    }
+  }
 }
 
 // 导出便捷的API对象
@@ -184,6 +205,7 @@ export const mcpServerApi = {
   getTags: MCPServerService.getTags,
   testConnection: MCPServerService.testConnection,
   discoverTools: MCPServerService.discoverTools,
+  refreshTools: MCPServerService.refreshTools,
 };
 
 export default MCPServerService;

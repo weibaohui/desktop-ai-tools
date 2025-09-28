@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"desktop-ai-tools/models"
+	"desktop-ai-tools/utils"
+
 	"gorm.io/gorm"
 )
 
@@ -44,20 +46,21 @@ func (s *MCPToolService) DiscoverTools(serverID uint) (*models.MCPToolDiscoveryR
 	// 连接MCP服务器获取工具列表
 	tools, err := s.fetchToolsFromMCPServer(server.URL, server.AuthType, server.AuthConfig)
 	if err != nil {
-		// 为演示目的，使用模拟工具数据并保存到数据库
-		tools = s.getMockTools(serverID)
-		// 继续执行保存逻辑，不直接返回
+		return &models.MCPToolDiscoveryResponse{
+			Success: false,
+			Message: fmt.Sprintf("从MCP服务器获取工具列表失败:%s", err.Error()),
+		}, nil
 	}
 
 	// 保存或更新工具到数据库
 	var savedTools []models.MCPTool
 	for _, tool := range tools {
 		tool.ServerID = serverID
-		
+
 		// 检查工具是否已存在
 		var existingTool models.MCPTool
 		err := s.db.Where("server_id = ? AND name = ?", serverID, tool.Name).First(&existingTool).Error
-		
+
 		if err == gorm.ErrRecordNotFound {
 			// 新工具，直接创建
 			if err := s.db.Create(&tool).Error; err != nil {
@@ -70,7 +73,7 @@ func (s *MCPToolService) DiscoverTools(serverID uint) (*models.MCPToolDiscoveryR
 			existingTool.Category = tool.Category
 			existingTool.Parameters = tool.Parameters
 			existingTool.UpdatedAt = time.Now()
-			
+
 			if err := s.db.Save(&existingTool).Error; err != nil {
 				continue // 跳过更新失败的工具
 			}
@@ -147,6 +150,9 @@ func (s *MCPToolService) fetchToolsFromMCPServer(url, authType, authConfig strin
 		return nil, fmt.Errorf("解析响应失败: %v", err)
 	}
 
+	// 打印MCP服务器响应结果用于调试
+	utils.PrintJSON(mcpResp, "MCP服务器响应")
+
 	if mcpResp.Error != nil {
 		return nil, fmt.Errorf("MCP服务器错误: %s", mcpResp.Error.Message)
 	}
@@ -210,7 +216,7 @@ func (s *MCPToolService) addAuthentication(req *http.Request, authType, authConf
 // inferCategory 根据工具名称推断分类
 func (s *MCPToolService) inferCategory(toolName string) string {
 	name := strings.ToLower(toolName)
-	
+
 	if strings.Contains(name, "k8s") || strings.Contains(name, "kubernetes") {
 		return "Kubernetes"
 	}
@@ -226,19 +232,19 @@ func (s *MCPToolService) inferCategory(toolName string) string {
 	if strings.Contains(name, "database") || strings.Contains(name, "db") {
 		return "数据库"
 	}
-	
+
 	return "其他"
 }
 
 // parseToolParameters 解析工具参数
 func (s *MCPToolService) parseToolParameters(inputSchema map[string]interface{}) ([]models.MCPToolParameter, error) {
 	var params []models.MCPToolParameter
-	
+
 	properties, ok := inputSchema["properties"].(map[string]interface{})
 	if !ok {
 		return params, nil
 	}
-	
+
 	required, _ := inputSchema["required"].([]interface{})
 	requiredMap := make(map[string]bool)
 	for _, req := range required {
@@ -246,26 +252,26 @@ func (s *MCPToolService) parseToolParameters(inputSchema map[string]interface{})
 			requiredMap[reqStr] = true
 		}
 	}
-	
+
 	for name, prop := range properties {
 		if propMap, ok := prop.(map[string]interface{}); ok {
 			param := models.MCPToolParameter{
 				Name:     name,
 				Required: requiredMap[name],
 			}
-			
+
 			if typeVal, ok := propMap["type"].(string); ok {
 				param.Type = typeVal
 			}
-			
+
 			if desc, ok := propMap["description"].(string); ok {
 				param.Description = desc
 			}
-			
+
 			if defaultVal, ok := propMap["default"]; ok {
 				param.Default = defaultVal
 			}
-			
+
 			if enumVal, ok := propMap["enum"].([]interface{}); ok {
 				for _, e := range enumVal {
 					if eStr, ok := e.(string); ok {
@@ -273,11 +279,11 @@ func (s *MCPToolService) parseToolParameters(inputSchema map[string]interface{})
 					}
 				}
 			}
-			
+
 			params = append(params, param)
 		}
 	}
-	
+
 	return params, nil
 }
 
@@ -292,17 +298,17 @@ func (s *MCPToolService) GetToolsByServer(req *models.MCPToolListRequest) (*mode
 	if req.ServerID > 0 {
 		query = query.Where("server_id = ?", req.ServerID)
 	}
-	
+
 	if req.Category != "" {
 		query = query.Where("category = ?", req.Category)
 	}
-	
+
 	if req.Enabled != nil {
 		query = query.Where("is_enabled = ?", *req.Enabled)
 	}
-	
+
 	if req.Search != "" {
-		query = query.Where("name LIKE ? OR description LIKE ?", 
+		query = query.Where("name LIKE ? OR description LIKE ?",
 			"%"+req.Search+"%", "%"+req.Search+"%")
 	}
 
@@ -328,101 +334,107 @@ func (s *MCPToolService) GetToolsByServer(req *models.MCPToolListRequest) (*mode
 // UpdateTool 更新工具
 func (s *MCPToolService) UpdateTool(id uint, req *models.MCPToolUpdateRequest) error {
 	updates := make(map[string]interface{})
-	
+
 	if req.IsEnabled != nil {
 		updates["is_enabled"] = *req.IsEnabled
 	}
-	
+
 	if req.Category != "" {
 		updates["category"] = req.Category
 	}
-	
+
 	if len(updates) > 0 {
 		updates["updated_at"] = time.Now()
 		return s.db.Model(&models.MCPTool{}).Where("id = ?", id).Updates(updates).Error
 	}
-	
+
 	return nil
 }
 
 // BatchUpdateTools 批量更新工具
 func (s *MCPToolService) BatchUpdateTools(req *models.MCPToolBatchUpdateRequest) error {
 	updates := make(map[string]interface{})
-	
+
 	if req.IsEnabled != nil {
 		updates["is_enabled"] = *req.IsEnabled
 	}
-	
+
 	if req.Category != "" {
 		updates["category"] = req.Category
 	}
-	
+
 	if len(updates) > 0 {
 		updates["updated_at"] = time.Now()
 		return s.db.Model(&models.MCPTool{}).Where("id IN ?", req.ToolIDs).Updates(updates).Error
 	}
-	
+
 	return nil
 }
 
 // GetToolCategories 获取工具分类列表
 func (s *MCPToolService) GetToolCategories(serverID uint) ([]string, error) {
 	var categories []string
-	
+
 	query := s.db.Model(&models.MCPTool{}).Select("DISTINCT category").Where("category != ''")
 	if serverID > 0 {
 		query = query.Where("server_id = ?", serverID)
 	}
-	
+
 	if err := query.Pluck("category", &categories).Error; err != nil {
 		return nil, err
 	}
-	
+
 	return categories, nil
 }
 
-// getMockTools 获取模拟工具数据用于演示
-func (s *MCPToolService) getMockTools(serverID uint) []models.MCPTool {
-	return []models.MCPTool{
-		{
-			ServerID:    serverID,
-			Name:        "list_k8s_pods",
-			Description: "列出Kubernetes集群中的Pod",
-			Category:    "kubernetes",
-			Parameters:  `[{"name":"namespace","type":"string","description":"命名空间","required":false}]`,
-			IsEnabled:   true,
-		},
-		{
-			ServerID:    serverID,
-			Name:        "get_k8s_pod_logs",
-			Description: "获取Pod的日志信息",
-			Category:    "kubernetes",
-			Parameters:  `[{"name":"namespace","type":"string","description":"命名空间","required":true},{"name":"pod_name","type":"string","description":"Pod名称","required":true}]`,
-			IsEnabled:   true,
-		},
-		{
-			ServerID:    serverID,
-			Name:        "describe_k8s_resource",
-			Description: "描述Kubernetes资源详情",
-			Category:    "kubernetes",
-			Parameters:  `[{"name":"resource_type","type":"string","description":"资源类型","required":true},{"name":"name","type":"string","description":"资源名称","required":true},{"name":"namespace","type":"string","description":"命名空间","required":false}]`,
-			IsEnabled:   true,
-		},
-		{
-			ServerID:    serverID,
-			Name:        "apply_k8s_yaml",
-			Description: "应用Kubernetes YAML配置",
-			Category:    "kubernetes",
-			Parameters:  `[{"name":"yaml_content","type":"string","description":"YAML配置内容","required":true}]`,
-			IsEnabled:   true,
-		},
-		{
-			ServerID:    serverID,
-			Name:        "delete_k8s_resource",
-			Description: "删除Kubernetes资源",
-			Category:    "kubernetes",
-			Parameters:  `[{"name":"resource_type","type":"string","description":"资源类型","required":true},{"name":"name","type":"string","description":"资源名称","required":true},{"name":"namespace","type":"string","description":"命名空间","required":false}]`,
-			IsEnabled:   true,
-		},
+// RefreshAllTools 刷新指定服务器的所有工具
+func (s *MCPToolService) RefreshAllTools(serverID uint) (*models.MCPToolDiscoveryResponse, error) {
+	// 获取服务器信息
+	var server models.MCPServer
+	if err := s.db.First(&server, serverID).Error; err != nil {
+		return &models.MCPToolDiscoveryResponse{
+			Success: false,
+			Message: "服务器不存在",
+		}, err
 	}
+
+	// 检查服务器状态
+	if server.Status != "active" {
+		return &models.MCPToolDiscoveryResponse{
+			Success: false,
+			Message: "服务器未激活，无法刷新工具",
+		}, nil
+	}
+
+	// 删除该服务器的所有现有工具
+	if err := s.db.Where("server_id = ?", serverID).Delete(&models.MCPTool{}).Error; err != nil {
+		return &models.MCPToolDiscoveryResponse{
+			Success: false,
+			Message: "删除现有工具失败",
+		}, err
+	}
+
+	// 从MCP服务器获取最新的工具列表
+	tools, err := s.fetchToolsFromMCPServer(server.URL, server.AuthType, server.AuthConfig)
+	if err != nil {
+		// 如果获取失败，直接返回错误，不再使用模拟数据
+		return &models.MCPToolDiscoveryResponse{
+			Success: false,
+			Message: fmt.Sprintf("从MCP服务器获取工具列表失败: %s", err.Error()),
+		}, err
+	}
+
+	// 保存新的工具到数据库
+	var savedCount int
+	for _, tool := range tools {
+		if err := s.db.Create(&tool).Error; err == nil {
+			savedCount++
+		}
+	}
+
+	return &models.MCPToolDiscoveryResponse{
+		Success: true,
+		Message: fmt.Sprintf("成功刷新 %d 个工具", savedCount),
+		Tools:   tools,
+	}, nil
 }

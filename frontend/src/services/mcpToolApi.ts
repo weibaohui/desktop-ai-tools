@@ -23,6 +23,8 @@ export interface MCPToolListRequest {
   category?: string;
   search?: string;
   is_enabled?: boolean;
+  page?: number;
+  size?: number;
 }
 
 export interface MCPToolUpdateRequest {

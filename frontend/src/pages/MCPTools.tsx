@@ -107,6 +107,7 @@ const MCPTools: React.FC = () => {
         server_id: selectedServer,
         category: selectedCategory,
         search: searchText,
+        size: 100, // 设置为最大值以显示所有工具
       });
       setTools(response.tools || []);
     } catch (error) {

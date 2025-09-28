@@ -405,7 +405,7 @@ func (s *MCPToolService) RefreshAllTools(serverID uint) (*models.MCPToolDiscover
 			Message: "服务器未激活，无法刷新工具",
 		}, nil
 	}
-
+	fmt.Printf("删除该服务器的所有现有工具 %d 的工具列表\n", uint(serverID))
 	// 删除该服务器的所有现有工具
 	if err := s.db.Where("server_id = ?", serverID).Delete(&models.MCPTool{}).Error; err != nil {
 		return &models.MCPToolDiscoveryResponse{
@@ -413,17 +413,18 @@ func (s *MCPToolService) RefreshAllTools(serverID uint) (*models.MCPToolDiscover
 			Message: "删除现有工具失败",
 		}, err
 	}
-
+	fmt.Printf("从MCP服务器 %s 获取最新的工具列表fetchToolsFromMCPServer\n", server.URL)
 	// 从MCP服务器获取最新的工具列表
 	tools, err := s.fetchToolsFromMCPServer(server.URL, server.AuthType, server.AuthConfig)
 	if err != nil {
+		fmt.Printf("从MCP服务器 %s 获取工具列表失败: %s\n", server.URL, err.Error())
 		// 如果获取失败，直接返回错误，不再使用模拟数据
 		return &models.MCPToolDiscoveryResponse{
 			Success: false,
 			Message: fmt.Sprintf("从MCP服务器获取工具列表失败: %s", err.Error()),
 		}, err
 	}
-
+	fmt.Printf("成功从MCP服务器 %s 获取 %d 个工具\n", server.URL, len(tools))
 	// 保存新的工具到数据库
 	var savedCount int
 	for _, tool := range tools {

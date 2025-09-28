@@ -2,3 +2,4 @@ build/bin
 node_modules
 frontend/dist
 desktop-ai-tools
+database.db

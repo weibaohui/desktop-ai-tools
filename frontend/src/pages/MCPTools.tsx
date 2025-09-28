@@ -32,6 +32,7 @@ import {
 } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
 import { mcpServerApi } from '../services/mcpServerService';
+import { mcpToolApi } from '../services/mcpToolApi';
 import type { MCPServer } from '../types/mcpServer';
 
 const { Title, Text, Paragraph } = Typography;
@@ -51,28 +52,7 @@ interface MCPTool {
   updated_at: string;
 }
 
-// 定义API服务
-const mcpToolApi = {
-  async getList(params: { server_id?: number; category?: string; search?: string; is_enabled?: boolean } = {}) {
-    // 这里暂时返回模拟数据，后续会连接真实API
-    return {
-      tools: [] as MCPTool[],
-      total: 0,
-    };
-  },
-  async update(id: number, data: { is_enabled?: boolean; category?: string }) {
-    // 暂时返回成功
-    return Promise.resolve();
-  },
-  async batchUpdate(data: { tool_ids: number[]; is_enabled?: boolean; category?: string }) {
-    // 暂时返回成功
-    return Promise.resolve();
-  },
-  async getCategories(serverId?: number) {
-    // 返回默认分类
-    return ['工具', '数据处理', '文件操作', '网络请求', '其他'];
-  },
-};
+// 使用真实的API服务
 
 interface ToolTreeNode extends DataNode {
   type: 'server' | 'category' | 'tool';

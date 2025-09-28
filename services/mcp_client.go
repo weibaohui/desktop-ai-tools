@@ -2,234 +2,178 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
-	"net/url"
-	"strings"
-	"time"
 
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
 	"desktop-ai-tools/models"
-	"github.com/modelcontextprotocol/go-sdk/src/client"
-	"github.com/modelcontextprotocol/go-sdk/src/protocol"
-	"github.com/modelcontextprotocol/go-sdk/src/transport"
 )
 
-// MCPClient MCP客户端封装
+// MCPClient MCP客户端结构体
 type MCPClient struct {
 	client *client.Client
 	url    string
 }
 
 // NewMCPClient 创建新的MCP客户端
-func NewMCPClient(serverURL string) (*MCPClient, error) {
-	// 解析URL以确定传输类型
-	parsedURL, err := url.Parse(serverURL)
-	if err != nil {
-		return nil, fmt.Errorf("无效的服务器URL: %v", err)
-	}
-
-	var transport transport.Transport
-
-	// 根据URL协议选择传输方式
-	switch parsedURL.Scheme {
-	case "http", "https":
-		// 对于HTTP/HTTPS，使用SSE传输
-		transport, err = transport.NewSSETransport(serverURL)
-		if err != nil {
-			return nil, fmt.Errorf("创建SSE传输失败: %v", err)
-		}
-	default:
-		return nil, fmt.Errorf("不支持的协议: %s", parsedURL.Scheme)
-	}
-
-	// 创建MCP客户端
-	mcpClient := client.NewClient(transport)
-
+func NewMCPClient(url string) *MCPClient {
 	return &MCPClient{
-		client: mcpClient,
-		url:    serverURL,
-	}, nil
+		url: url,
+	}
 }
 
 // Connect 连接到MCP服务器
 func (c *MCPClient) Connect(ctx context.Context) error {
-	// 连接到服务器
-	err := c.client.Connect(ctx)
+	// 创建SSE客户端
+	mcpClient, err := client.NewSSEMCPClient(c.url)
 	if err != nil {
-		return fmt.Errorf("连接MCP服务器失败: %v", err)
+		return fmt.Errorf("创建MCP客户端失败: %w", err)
 	}
-
-	// 初始化客户端
-	initRequest := &protocol.InitializeRequest{
-		ProtocolVersion: "2024-11-05",
-		Capabilities: &protocol.ClientCapabilities{
-			Roots: &protocol.RootsCapability{
-				ListChanged: true,
+	
+	c.client = mcpClient
+	
+	// 启动客户端
+	err = c.client.Start(ctx)
+	if err != nil {
+		return fmt.Errorf("启动MCP客户端失败: %w", err)
+	}
+	
+	// 初始化连接
+	initRequest := mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: "2024-11-05",
+			Capabilities: mcp.ClientCapabilities{
+				Roots: &struct {
+					ListChanged bool `json:"listChanged,omitempty"`
+				}{
+					ListChanged: true,
+				},
+			},
+			ClientInfo: mcp.Implementation{
+				Name:    "desktop-ai-tools",
+				Version: "1.0.0",
 			},
 		},
-		ClientInfo: &protocol.Implementation{
-			Name:    "desktop-ai-tools",
-			Version: "1.0.0",
-		},
 	}
-
+	
 	_, err = c.client.Initialize(ctx, initRequest)
 	if err != nil {
-		return fmt.Errorf("初始化MCP客户端失败: %v", err)
+		return fmt.Errorf("初始化MCP客户端失败: %w", err)
 	}
-
+	
 	return nil
 }
 
-// ListTools 获取工具列表
+// ListTools 获取可用工具列表
 func (c *MCPClient) ListTools(ctx context.Context) ([]models.MCPTool, error) {
-	// 调用tools/list方法
-	response, err := c.client.ListTools(ctx, &protocol.ListToolsRequest{})
-	if err != nil {
-		return nil, fmt.Errorf("获取工具列表失败: %v", err)
+	if c.client == nil {
+		return nil, fmt.Errorf("客户端未连接")
 	}
-
-	// 转换为内部模型
+	
+	// 获取工具列表
+	toolsResponse, err := c.client.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("获取工具列表失败: %w", err)
+	}
+	
 	var tools []models.MCPTool
-	for _, tool := range response.Tools {
+	for _, tool := range toolsResponse.Tools {
+		// 解析参数
+		var parameters []models.MCPToolParameter
+		
+		// 检查InputSchema是否有内容
+		if tool.InputSchema.Type != "" || len(tool.InputSchema.Properties) > 0 {
+			// 处理必需字段
+			required := make(map[string]bool)
+			for _, req := range tool.InputSchema.Required {
+				required[req] = true
+			}
+			
+			// 遍历属性
+			for name, prop := range tool.InputSchema.Properties {
+				if propMap, ok := prop.(map[string]interface{}); ok {
+					param := models.MCPToolParameter{
+						Name:        name,
+						Type:        getStringValue(propMap, "type"),
+						Description: getStringValue(propMap, "description"),
+						Required:    required[name],
+					}
+					
+					if defaultVal, exists := propMap["default"]; exists {
+						param.Default = defaultVal
+					}
+					
+					if enum, ok := propMap["enum"].([]interface{}); ok {
+						for _, e := range enum {
+							if enumStr, ok := e.(string); ok {
+								param.Enum = append(param.Enum, enumStr)
+							}
+						}
+					}
+					
+					parameters = append(parameters, param)
+				}
+			}
+		}
+		
+		// 序列化参数
+		parametersJSON, err := json.Marshal(parameters)
+		if err != nil {
+			log.Printf("序列化参数失败: %v", err)
+			parametersJSON = []byte("[]")
+		}
+		
 		mcpTool := models.MCPTool{
 			Name:        tool.Name,
 			Description: tool.Description,
-			Category:    c.inferCategory(tool.Name),
+			Parameters:  string(parametersJSON),
+			IsEnabled:   true, // 默认启用
 		}
-
-		// 解析参数
-		if tool.InputSchema != nil {
-			parameters, err := c.parseToolParameters(tool.InputSchema)
-			if err != nil {
-				log.Printf("解析工具 %s 参数失败: %v", tool.Name, err)
-				continue
-			}
-			mcpTool.Parameters = parameters
-		}
-
+		
 		tools = append(tools, mcpTool)
 	}
-
+	
 	return tools, nil
 }
 
 // CallTool 调用工具
-func (c *MCPClient) CallTool(ctx context.Context, name string, arguments map[string]interface{}) (*protocol.CallToolResult, error) {
-	request := &protocol.CallToolRequest{
-		Name:      name,
-		Arguments: arguments,
+func (c *MCPClient) CallTool(ctx context.Context, name string, arguments map[string]interface{}) (*mcp.CallToolResult, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("客户端未连接")
 	}
-
-	response, err := c.client.CallTool(ctx, request)
+	
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      name,
+			Arguments: arguments,
+		},
+	}
+	
+	result, err := c.client.CallTool(ctx, request)
 	if err != nil {
-		return nil, fmt.Errorf("调用工具 %s 失败: %v", name, err)
+		return nil, fmt.Errorf("调用工具失败: %w", err)
 	}
-
-	return response, nil
+	
+	return result, nil
 }
 
 // Close 关闭连接
 func (c *MCPClient) Close() error {
+	// mark3labs/mcp-go的客户端没有Close方法，这里暂时不做处理
 	if c.client != nil {
-		return c.client.Close()
+		c.client = nil
 	}
 	return nil
 }
 
-// inferCategory 推断工具类别
-func (c *MCPClient) inferCategory(toolName string) string {
-	toolName = strings.ToLower(toolName)
-	
-	if strings.Contains(toolName, "k8s") || strings.Contains(toolName, "kubernetes") {
-		return "kubernetes"
-	}
-	if strings.Contains(toolName, "pod") {
-		return "kubernetes"
-	}
-	if strings.Contains(toolName, "deploy") {
-		return "kubernetes"
-	}
-	if strings.Contains(toolName, "service") {
-		return "kubernetes"
-	}
-	if strings.Contains(toolName, "node") {
-		return "kubernetes"
-	}
-	if strings.Contains(toolName, "namespace") {
-		return "kubernetes"
-	}
-	if strings.Contains(toolName, "log") {
-		return "monitoring"
-	}
-	if strings.Contains(toolName, "metric") {
-		return "monitoring"
-	}
-	if strings.Contains(toolName, "file") {
-		return "file"
-	}
-	if strings.Contains(toolName, "search") {
-		return "search"
-	}
-	
-	return "general"
-}
-
-// parseToolParameters 解析工具参数
-func (c *MCPClient) parseToolParameters(inputSchema interface{}) ([]models.MCPToolParameter, error) {
-	var parameters []models.MCPToolParameter
-	
-	// 将interface{}转换为map
-	schemaMap, ok := inputSchema.(map[string]interface{})
-	if !ok {
-		return parameters, nil
-	}
-	
-	// 获取properties
-	properties, ok := schemaMap["properties"].(map[string]interface{})
-	if !ok {
-		return parameters, nil
-	}
-	
-	// 获取required字段
-	requiredFields := make(map[string]bool)
-	if required, ok := schemaMap["required"].([]interface{}); ok {
-		for _, field := range required {
-			if fieldName, ok := field.(string); ok {
-				requiredFields[fieldName] = true
-			}
+// getStringValue 从map中获取字符串值的辅助函数
+func getStringValue(m map[string]interface{}, key string) string {
+	if val, ok := m[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
 		}
 	}
-	
-	// 解析每个参数
-	for paramName, paramDef := range properties {
-		paramDefMap, ok := paramDef.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		
-		param := models.MCPToolParameter{
-			Name:     paramName,
-			Required: requiredFields[paramName],
-		}
-		
-		// 获取类型
-		if paramType, ok := paramDefMap["type"].(string); ok {
-			param.Type = paramType
-		}
-		
-		// 获取描述
-		if description, ok := paramDefMap["description"].(string); ok {
-			param.Description = description
-		}
-		
-		// 获取默认值
-		if defaultValue, ok := paramDefMap["default"]; ok {
-			param.DefaultValue = fmt.Sprintf("%v", defaultValue)
-		}
-		
-		parameters = append(parameters, param)
-	}
-	
-	return parameters, nil
+	return ""
 }

@@ -1,15 +1,13 @@
 package services
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"net/http"
+	"log"
 	"strings"
 	"time"
 
 	"desktop-ai-tools/models"
-	"desktop-ai-tools/utils"
 
 	"gorm.io/gorm"
 )
@@ -94,124 +92,44 @@ func (s *MCPToolService) DiscoverTools(serverID uint) (*models.MCPToolDiscoveryR
 	}, nil
 }
 
-// fetchToolsFromMCPServer 从MCP服务器获取工具列表
+// fetchToolsFromMCPServer 从 MCP 服务器获取工具列表，使用 MCP SDK
 func (s *MCPToolService) fetchToolsFromMCPServer(url, authType, authConfig string) ([]models.MCPTool, error) {
-	// 构建请求
-	reqBody := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "tools/list",
-		"params":  map[string]interface{}{},
-	}
-
-	jsonData, err := json.Marshal(reqBody)
+	log.Printf("开始使用 MCP SDK 从服务器获取工具: %s", url)
+	
+	// 创建 MCP 客户端
+	mcpClient := NewMCPClient(url)
+	
+	// 创建上下文
+	ctx := context.Background()
+	
+	// 连接到 MCP 服务器
+	log.Printf("连接到 MCP 服务器: %s", url)
+	err := mcpClient.Connect(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("构建请求失败: %v", err)
+		log.Printf("连接 MCP 服务器失败: %v", err)
+		return nil, fmt.Errorf("连接 MCP 服务器失败: %w", err)
 	}
-
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("创建请求失败: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// 添加认证信息
-	if err := s.addAuthentication(req, authType, authConfig); err != nil {
-		return nil, fmt.Errorf("添加认证失败: %v", err)
-	}
-
-	// 发送请求
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("服务器返回错误状态: %d", resp.StatusCode)
-	}
-
-	// 解析响应
-	var mcpResp struct {
-		JSONRPC string `json:"jsonrpc"`
-		ID      int    `json:"id"`
-		Result  struct {
-			Tools []models.MCPToolSchema `json:"tools"`
-		} `json:"result"`
-		Error *struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&mcpResp); err != nil {
-		return nil, fmt.Errorf("解析响应失败: %v", err)
-	}
-
-	// 打印MCP服务器响应结果用于调试
-	utils.PrintJSON(mcpResp, "MCP服务器响应")
-
-	if mcpResp.Error != nil {
-		return nil, fmt.Errorf("MCP服务器错误: %s", mcpResp.Error.Message)
-	}
-
-	// 转换为内部工具格式
-	var tools []models.MCPTool
-	for _, toolSchema := range mcpResp.Result.Tools {
-		tool := models.MCPTool{
-			Name:        toolSchema.Name,
-			Description: toolSchema.Description,
-			Category:    s.inferCategory(toolSchema.Name),
-			IsEnabled:   true,
+	
+	// 确保在函数结束时关闭连接
+	defer func() {
+		if closeErr := mcpClient.Close(); closeErr != nil {
+			log.Printf("关闭 MCP 客户端连接时出错: %v", closeErr)
 		}
-
-		// 解析参数
-		if params, err := s.parseToolParameters(toolSchema.InputSchema); err == nil {
-			if paramData, err := json.Marshal(params); err == nil {
-				tool.Parameters = string(paramData)
-			}
-		}
-
-		tools = append(tools, tool)
+	}()
+	
+	// 获取工具列表
+	log.Printf("获取工具列表")
+	tools, err := mcpClient.ListTools(ctx)
+	if err != nil {
+		log.Printf("获取工具列表失败: %v", err)
+		return nil, fmt.Errorf("获取工具列表失败: %w", err)
 	}
-
+	
+	log.Printf("成功使用 MCP SDK 获取 %d 个工具", len(tools))
 	return tools, nil
 }
 
-// addAuthentication 添加认证信息到请求
-func (s *MCPToolService) addAuthentication(req *http.Request, authType, authConfig string) error {
-	switch authType {
-	case "bearer":
-		var config struct {
-			Token string `json:"token"`
-		}
-		if err := json.Unmarshal([]byte(authConfig), &config); err != nil {
-			return err
-		}
-		req.Header.Set("Authorization", "Bearer "+config.Token)
-	case "basic":
-		var config struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
-		}
-		if err := json.Unmarshal([]byte(authConfig), &config); err != nil {
-			return err
-		}
-		req.SetBasicAuth(config.Username, config.Password)
-	case "api_key":
-		var config struct {
-			Key   string `json:"key"`
-			Value string `json:"value"`
-		}
-		if err := json.Unmarshal([]byte(authConfig), &config); err != nil {
-			return err
-		}
-		req.Header.Set(config.Key, config.Value)
-	}
-	return nil
-}
+
 
 // inferCategory 根据工具名称推断分类
 func (s *MCPToolService) inferCategory(toolName string) string {
@@ -388,49 +306,71 @@ func (s *MCPToolService) GetToolCategories(serverID uint) ([]string, error) {
 }
 
 // RefreshAllTools 刷新指定服务器的所有工具
+// RefreshAllTools 刷新指定服务器的所有工具
 func (s *MCPToolService) RefreshAllTools(serverID uint) (*models.MCPToolDiscoveryResponse, error) {
+	log.Printf("开始刷新服务器 ID %d 的工具列表", serverID)
+	
 	// 获取服务器信息
 	var server models.MCPServer
 	if err := s.db.First(&server, serverID).Error; err != nil {
+		log.Printf("获取服务器信息失败 (ID: %d): %v", serverID, err)
 		return &models.MCPToolDiscoveryResponse{
 			Success: false,
 			Message: "服务器不存在",
 		}, err
 	}
 
+	log.Printf("找到服务器: %s (URL: %s, 状态: %s)", server.Name, server.URL, server.Status)
+
 	// 检查服务器状态
 	if server.Status != "active" {
+		log.Printf("服务器 %s 未激活，状态: %s", server.Name, server.Status)
 		return &models.MCPToolDiscoveryResponse{
 			Success: false,
 			Message: "服务器未激活，无法刷新工具",
 		}, nil
 	}
-	fmt.Printf("删除该服务器的所有现有工具 %d 的工具列表\n", uint(serverID))
+
+	log.Printf("删除服务器 %d 的所有现有工具", serverID)
 	// 删除该服务器的所有现有工具
 	if err := s.db.Where("server_id = ?", serverID).Delete(&models.MCPTool{}).Error; err != nil {
+		log.Printf("删除现有工具失败 (服务器 ID: %d): %v", serverID, err)
 		return &models.MCPToolDiscoveryResponse{
 			Success: false,
 			Message: "删除现有工具失败",
 		}, err
 	}
-	fmt.Printf("从MCP服务器 %s 获取最新的工具列表fetchToolsFromMCPServer\n", server.URL)
+
+	log.Printf("开始从 MCP 服务器获取工具列表: %s", server.URL)
 	// 从MCP服务器获取最新的工具列表
 	tools, err := s.fetchToolsFromMCPServer(server.URL, server.AuthType, server.AuthConfig)
 	if err != nil {
-		fmt.Printf("从MCP服务器 %s 获取工具列表失败: %s\n", server.URL, err.Error())
-		// 如果获取失败，直接返回错误，不再使用模拟数据
+		log.Printf("从 MCP 服务器 %s 获取工具列表失败: %v", server.URL, err)
 		return &models.MCPToolDiscoveryResponse{
 			Success: false,
 			Message: fmt.Sprintf("从MCP服务器获取工具列表失败: %s", err.Error()),
 		}, err
 	}
-	fmt.Printf("成功从MCP服务器 %s 获取 %d 个工具\n", server.URL, len(tools))
+
+	log.Printf("成功从 MCP 服务器 %s 获取 %d 个工具", server.URL, len(tools))
+
 	// 保存新的工具到数据库
 	var savedCount int
-	for _, tool := range tools {
-		if err := s.db.Create(&tool).Error; err == nil {
+	var failedCount int
+	for i, tool := range tools {
+		tool.ServerID = serverID // 确保设置正确的服务器ID
+		if err := s.db.Create(&tool).Error; err != nil {
+			log.Printf("保存工具失败 (索引 %d, 名称: %s): %v", i, tool.Name, err)
+			failedCount++
+		} else {
 			savedCount++
 		}
+	}
+
+	if failedCount > 0 {
+		log.Printf("工具保存完成: 成功 %d 个, 失败 %d 个", savedCount, failedCount)
+	} else {
+		log.Printf("成功保存所有 %d 个工具", savedCount)
 	}
 
 	return &models.MCPToolDiscoveryResponse{

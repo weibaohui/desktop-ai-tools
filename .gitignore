@@ -4,3 +4,4 @@ frontend/dist
 desktop-ai-tools
 database.db
 app.db
+tmp/

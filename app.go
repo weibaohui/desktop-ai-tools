@@ -10,8 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"desktop-ai-tools/database"
+	"desktop-ai-tools/middleware"
 	"desktop-ai-tools/models"
 	"desktop-ai-tools/services"
+	"desktop-ai-tools/utils"
 )
 
 // App struct
@@ -36,46 +38,54 @@ type HelloResponse struct {
 // NewApp creates a new App application struct
 func NewApp() *App {
 	app := &App{}
-	
+
 	// 初始化数据库
 	if err := database.InitDatabase(); err != nil {
 		fmt.Printf("数据库初始化失败: %v\n", err)
 		panic(err)
 	}
-	
+
 	// 初始化种子数据
 	if err := database.SeedData(); err != nil {
 		fmt.Printf("种子数据初始化失败: %v\n", err)
 	}
-	
+
 	// 初始化服务
 	app.mcpServerService = services.NewMCPServerService()
 	app.mcpToolService = services.NewMCPToolService(database.GetDB())
-	
+
 	app.setupRouter()
 	return app
 }
 
 // setupRouter 设置Gin路由
 func (a *App) setupRouter() {
-	// 设置Gin为发布模式
-	gin.SetMode(gin.ReleaseMode)
-	
+	// 设置Gin为开发模式（用于测试详细错误信息）
+	gin.SetMode(gin.DebugMode)
+
 	a.router = gin.Default()
-	
+
+	// 添加错误处理中间件
+	a.router.Use(middleware.ErrorHandler())
+	a.router.Use(middleware.LogErrors())
+
 	// 配置CORS
 	config := cors.DefaultConfig()
 	config.AllowAllOrigins = true
 	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization"}
 	a.router.Use(cors.New(config))
-	
+
 	// 设置API路由
 	api := a.router.Group("/api")
 	{
 		api.POST("/hello", a.handleHello)
 		api.GET("/health", a.handleHealth)
-		
+
+		// 测试错误处理的端点
+		api.GET("/test-error", a.handleTestError)
+		api.GET("/test-panic", a.handleTestPanic)
+
 		// MCP Server 相关路由
 		mcpServers := api.Group("/mcp-servers")
 		{
@@ -87,11 +97,11 @@ func (a *App) setupRouter() {
 			mcpServers.PUT("/:id/status", a.handleUpdateMCPServerStatus)
 			mcpServers.PUT("/:id/toggle", a.handleToggleMCPServer)
 			mcpServers.GET("/tags", a.handleGetMCPServerTags)
-			
+
 			// 工具发现路由
 			mcpServers.POST("/:id/discover-tools", a.handleDiscoverTools)
 		}
-		
+
 		// MCP Tools 相关路由
 		mcpTools := api.Group("/mcp-tools")
 		{
@@ -108,7 +118,7 @@ func (a *App) setupRouter() {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	
+
 	// 启动Gin服务器
 	go func() {
 		if err := a.router.Run(":8080"); err != nil {
@@ -120,7 +130,7 @@ func (a *App) startup(ctx context.Context) {
 // handleHello 处理Hello请求的API接口
 func (a *App) handleHello(c *gin.Context) {
 	var req HelloRequest
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid request format",
@@ -128,10 +138,10 @@ func (a *App) handleHello(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// 处理Hello逻辑
 	response := fmt.Sprintf("Hello from backend! You sent: %s", req.Message)
-	
+
 	c.JSON(http.StatusOK, HelloResponse{
 		Response: response,
 		Success:  true,
@@ -141,7 +151,7 @@ func (a *App) handleHello(c *gin.Context) {
 // handleHealth 健康检查接口
 func (a *App) handleHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"status": "ok",
+		"status":  "ok",
 		"message": "Server is running",
 	})
 }
@@ -554,7 +564,7 @@ func (a *App) handleRefreshTools(c *gin.Context) {
 		})
 		return
 	}
-
+	fmt.Printf("刷新服务器 %d 的工具列表\n", uint(serverID))
 	response, err := a.mcpToolService.RefreshAllTools(uint(serverID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -565,4 +575,28 @@ func (a *App) handleRefreshTools(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// handleTestError 测试错误处理的端点
+func (a *App) handleTestError(c *gin.Context) {
+	errorType := c.Query("type")
+
+	switch errorType {
+	case "400":
+		utils.BadRequestResponse(c, fmt.Errorf("这是一个400错误测试"), "请求参数错误测试")
+	case "404":
+		utils.NotFoundResponse(c, fmt.Errorf("这是一个404错误测试"), "资源未找到测试")
+	case "500":
+		utils.InternalServerErrorResponse(c, fmt.Errorf("这是一个500错误测试"), "服务器内部错误测试")
+	default:
+		utils.SuccessResponse(c, gin.H{
+			"message": "错误测试端点正常工作",
+			"usage":   "使用 ?type=400|404|500 来测试不同类型的错误",
+		}, "测试成功")
+	}
+}
+
+// handleTestPanic 测试panic处理的端点
+func (a *App) handleTestPanic(c *gin.Context) {
+	panic("这是一个测试panic")
 }
